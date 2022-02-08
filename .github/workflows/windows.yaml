@@ -1,0 +1,39 @@
+name: windows-latest
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Copy files
+        run: copy ./src/* ./tests/
+
+      - name: Build mustache
+        run: |
+          git submodule update --init
+          cmake ./mustache -B./mustache/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build ./mustache/build --config Release -j4
+          copy ./mustache/build/bin/Release/*.dll ./tests/
+
+      - name: Build LuaJit
+        run: |
+          git clone https://github.com/LuaJIT/LuaJIT.git -b v2.1
+          cd ./LuaJIT
+          make -j4
+          cd ..
+          copy ./LuaJIT/*/*.exe ./tests/
+          copy ./LuaJIT/*/*.dll ./tests/
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: windows-artifact
+          path: ./tests/
+
+      - name: Run Test
+        run: |
+          cd ./tests/
+          ./luajit.exe api_test.lua

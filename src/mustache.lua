@@ -2,19 +2,32 @@ local ffi = require("ffi")
 
 local function readHeader()
   local end_if = "#endif"
-  local str = io.open("c_api.h", "r"):read("*all"):match("#ifdef __cplusplus.*#ifdef __cplusplus")
+  local str = io.open("c_api.h", "r"):read("*all"):gsub("MUSTACHE_EXPORT", ""):match("#ifdef __cplusplus.*#ifdef __cplusplus")
   local start = str:find(end_if)
   local npos = #str - #"#ifdef __cplusplus"
   return str:sub(start + #end_if, npos)
 end
 
 ffi.cdef(readHeader())
-local mustache = ffi.load("./libmustache.so")
+
+local function getLibName()
+  local os_name = jit.os
+  if os_name == "Windows" then
+    return "./mustache.dll"
+  end
+  if os_name == "Linux" then
+    return "./libmustache.so"
+  end
+  error("Unsupported OS: " + os_name)
+end
+
+local mustache = ffi.load(getLibName())
 
 ffi.cdef("void free(void*)")
 local lib = {
   _native = mustache,
-  _Components = {}
+  _Components = {},
+  _Jobs = {}
 }
 local world = {}
 world.__index = world
@@ -27,6 +40,9 @@ local function getFields(def)
   return def:match("{.*}")
 end
 
+local function ptrToKey(ptr)
+  return tonumber(ffi.cast("uint64_t", ptr))
+end
 
 local function getFieldsEscapeStr(fields)
   local escape_table = {"%", "'", '"', "(", ")", ".", "-", "*", "[", "]", "?", "^", "$"}
@@ -135,8 +151,8 @@ end
 
 
 local function_prototype = 
-[[return function(callback, cast_to, ffi)
-  return function(call_args)
+[[return function(self, callback, cast_to, ffi)
+  return function(_, call_args)
     VARIABLES
     FOR_BEGIN
     CALL
@@ -158,15 +174,17 @@ local function makeVariableDeclarations(count)
 end
 
 local function makeCallDeclaration(job_desc, array)
-  local str = "callback("
+  local entity_required = job_desc.entity_required
+  local offset = (entity_required and 1 or 0)
+  local count = job_desc.component_info_arr_size + offset
+  local str = "callback(self" .. (count > 0 and ", " or "")
+  
   if not array then
     str = "  " .. str
   else
     str = str .. "call_args.array_size, "
   end
-  local entity_required = job_desc.entity_required
-  local offset = (entity_required and 1 or 0)
-  local count = job_desc.component_info_arr_size + offset
+
   for index = 1, count do
     local var_str = "var" .. (index - 1)
     local i = index - offset
@@ -186,6 +204,14 @@ local function makeCallDeclaration(job_desc, array)
   end
 
   return str
+end
+
+local function makeJobEvent(callback, job)
+  if callback ~= nil then
+    return function(ptr, task_count, total_count, mode)
+      callback(job, total_count)
+    end
+  end
 end
 
 local function makeJob(world, job)
@@ -224,9 +250,11 @@ local function makeJob(world, job)
   local start, finish = makeForStrs(array_function)
   local call = makeCallDeclaration(job_desc, array_function)
   local str = function_prototype:gsub("VARIABLES", var_decl):gsub("FOR_BEGIN", start):gsub("FOR_END", finish):gsub("CALL", call)
-  local new_callback = loadstring(str)()(callback, cast_to, ffi)  
+  local new_callback = loadstring(str)()(job, callback, cast_to, ffi)  
   jit.flush(new_callback)
   job_desc.callback = new_callback
+  job_desc.on_job_begin = makeJobEvent(job.onBegin, job)
+  job_desc.on_job_end = makeJobEvent(job.onEnd, job)
   local native_job = ffi.gc(mustache.makeJob(job_desc), mustache.destroyJob)
   return native_job, desc, str
 end
@@ -237,12 +265,13 @@ function lib.Job(job)
     job._native_ptr = ptr
     job._decsriptor = desc
     job._source_code = str
+    lib._Jobs[ptrToKey(ptr)] = job
   end
   return job
 end
 
 function world.run(self, job)
-  mustache.runJob(lib.Job(job)._native_ptr, self._WorldPtr)
+  mustache.runJob(lib.Job(job)._native_ptr, self._WorldPtr, mustache.kCurrentThread)
 end
 
 function world.createEntities(self, first, ...)
@@ -253,13 +282,12 @@ function world.createEntities(self, first, ...)
   else
     table.insert(args, first)
   end
-  local mask = ffi.new("ComponentMask")
-  mask.component_count = #args
-  mask.ids = ffi.new("ComponentId[?]", #args)
-  for i, v in pairs(args) do
-    mask.ids[i - 1] = lib.component(v).type_id
+  local mask = ffi.new("uint64_t")
+  for i = 1, #args do
+    local id = lib.component(args[i]).type_id
+    mask = mask + 2 ^ (id)
   end
-  local archetype = mustache.getArchetype(self._WorldPtr, mask)
+  local archetype = mustache.getArchetypeByBitsetMask(self._WorldPtr, mask)
   local group = ffi.new("Entity[?]", count)
   mustache.createEntityGroup(self._WorldPtr, archetype, group, count)
   return group

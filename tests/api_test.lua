@@ -12,7 +12,7 @@ benchmark(function() entities = world:createEntities(count, "Position", "Rotatio
 
 local job = {
   args = {"Position", "const Rotation", "const Velocity"},
-  forEach = function(pos, q, vel)
+  forEach = function(self, pos, q, vel)
     local dt = 1.0 / 60.0
     local dpos = dt * vel.value
     local qx, qy, qz, qw = q.x, q.y, q.z, q.w
