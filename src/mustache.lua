@@ -328,6 +328,28 @@ function world.update(self)
   mustache.updateWorld(self._WorldPtr)
 end
 
+function world.destroyEntities(self, entities, count, now)
+  if type(count) == "bool" then
+    now = count
+  end
+
+  local arr
+  if type(entities) == "table" then
+    arr = ffi.new("Entity[?]", #entities)
+    for i = 1, #entities do
+      arr[i - 1] = entities[i]
+    end
+    count = #entities
+  else
+    arr = entities
+    count = count or 1
+  end
+  if now == nil then
+    now = false
+  end
+  mustache.destroyEntities(self._WorldPtr, arr, count, now)
+end
+
 lib.World = {
   new = function(id)
     local w = mustache.createWorld(id and id or -1)
