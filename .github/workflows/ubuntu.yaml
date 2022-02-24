@@ -1,0 +1,39 @@
+name: ubuntu-latest
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Copy files
+        run: cp ./src/* ./tests/
+
+      - name: Build mustache
+        run: |
+          git submodule update --init
+          cmake ./mustache -B./mustache/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build ./mustache/build --config Release -j4
+          cp ./mustache/build/bin/*.so ./tests/
+
+      - name: Build LuaJit
+        run: |
+          git clone https://github.com/LuaJIT/LuaJIT.git -b v2.1
+          cd ./LuaJIT
+          make -j4
+          cd ..
+          cp ./LuaJIT/*/*luajit ./tests/
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ubuntu-artifact
+          path: ./tests/
+
+      - name: Run Test
+        run: |
+          cd ./tests/
+          ls
+          ./luajit api_test.lua
