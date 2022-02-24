@@ -1,4 +1,4 @@
-#Mustache-lua
+# Mustache-lua
 
 This is binding of [mustache](https://github.com/kirillochnev/mustache)
 library to LuaJit.
